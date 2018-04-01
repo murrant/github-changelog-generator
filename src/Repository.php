@@ -3,6 +3,7 @@
 namespace ins0\GitHub;
 
 use InvalidArgumentException;
+use Psr\SimpleCache\CacheInterface;
 
 /**
  * A simple class for working with GitHub's "Issues" API.
@@ -39,6 +40,11 @@ class Repository
     private $token;
 
     /**
+     * @var CacheInterface PSR16 cache
+     */
+    private $cache;
+
+    /**
      * Constructs a new instance.
      *
      * @param string $repository The username and repository
@@ -46,8 +52,9 @@ class Repository
      *                           format: ":username/:repository".
      * @param string $token      An optional OAUTH token for
      *                           authentication.
+     * @param CacheInterface $cache Optional PSR16 cache
      */
-    public function __construct($repository, $token = null)
+    public function __construct($repository, $token = null, CacheInterface $cache = null)
     {
         if (strpos($repository, '/') === false) {
             throw new InvalidArgumentException('Invalid format. Required format is: ":username/:repository".');
@@ -55,6 +62,7 @@ class Repository
 
         $this->url = sprintf('%s/repos/%s', self::GITHUB_API_URL, $repository);
         $this->token = $token;
+        $this->cache = $cache;
     }
 
     /**
@@ -69,7 +77,7 @@ class Repository
      */
     public function getReleases(array $params = [], $page = 1)
     {
-        return $this->fetch(sprintf('%s/releases', $this->url), $params, $page);
+        return $this->fetchCache(sprintf('%s/releases', $this->url), $params, $page);
     }
 
     /**
@@ -84,7 +92,7 @@ class Repository
      */
     public function getIssues(array $params = [], $page = 1)
     {
-        return $this->fetch(sprintf('%s/issues', $this->url), $params, $page);
+        return $this->fetchCache(sprintf('%s/issues', $this->url), $params, $page);
     }
 
     /**
@@ -96,7 +104,7 @@ class Repository
      */
     public function getLabels()
     {
-        return $this->fetch(sprintf('%s/labels', $this->url));
+        return $this->fetchCache(sprintf('%s/labels', $this->url));
     }
 
     /**
@@ -109,7 +117,7 @@ class Repository
      */
     public function getAssignees()
     {
-        return $this->fetch(sprintf('%s/assignees', $this->url));
+        return $this->fetchCache(sprintf('%s/assignees', $this->url));
     }
 
     /**
@@ -124,7 +132,7 @@ class Repository
      */
     public function getIssueComments($number, array $params = [])
     {
-        return $this->fetch(sprintf('%s/issues/%s/events', $this->url, $number), $params);
+        return $this->fetchCache(sprintf('%s/issues/%s/events', $this->url, $number), $params);
     }
 
     /**
@@ -138,7 +146,7 @@ class Repository
      */
     public function getIssueEvents($number)
     {
-        return $this->fetch(sprintf('%s/issues/%s/events', $this->url, $number));
+        return $this->fetchCache(sprintf('%s/issues/%s/events', $this->url, $number));
     }
 
     /**
@@ -152,7 +160,7 @@ class Repository
      */
     public function getIssueLabels($number)
     {
-        return $this->fetch(sprintf('%s/issues/%s/labels', $this->url, $number));
+        return $this->fetchCache(sprintf('%s/issues/%s/labels', $this->url, $number));
     }
 
     /**
@@ -167,11 +175,11 @@ class Repository
      */
     public function getMilestones(array $params = [], $page = 1)
     {
-        return $this->fetch(sprintf('%s/milestones', $this->url), $params, $page);
+        return $this->fetchCache(sprintf('%s/milestones', $this->url), $params, $page);
     }
 
     /**
-     * [fetch description]
+     * Fetch from cache or repo
      *
      * @param string  $call   [description]
      * @param array   $params [description]
@@ -179,27 +187,51 @@ class Repository
      *
      * @return object|array [description]
      */
-    private function fetch($call, array $params = [], $page = 1)
+    private function fetchCache($call, array $params = [], $page = 1)
     {
         $params = array_merge($params, [
             'access_token' => $this->token,
             'page' => $page
         ]);
 
+        $url = sprintf('%s?%s', $call, http_build_query($params));
+
+        if (isset($this->cache)) {
+            $key = sha1($url);
+            if ($this->cache->has($key)) {
+                $response = $this->cache->get($key);
+            } else {
+                $response = $this->fetch($url);
+                $this->cache->set($key, $response);
+            }
+        } else {
+            $response = $this->fetch($url);
+        }
+
+        if (count(preg_grep('#Link: <(.+?)>; rel="next"#', $http_response_header)) === 1) {
+            return array_merge($response, $this->fetchCache($call, $params, ++$page));
+        }
+
+        return $response;
+    }
+
+    /**
+     * Download from github
+     *
+     * @param $url
+     * @return array|bool|mixed|string
+     */
+    private function fetch($url)
+    {
         $options  = [
             'http' => [
                 'user_agent' => 'github-changelog-generator'
             ]
         ];
 
-        $url = sprintf('%s?%s', $call, http_build_query($params));
         $context  = stream_context_create($options);
         $response = file_get_contents($url, null, $context);
         $response = $response ? json_decode($response) : [];
-
-        if (count(preg_grep('#Link: <(.+?)>; rel="next"#', $http_response_header)) === 1) {
-            return array_merge($response, $this->fetch($call, $params, ++$page));
-        }
 
         return $response;
     }
