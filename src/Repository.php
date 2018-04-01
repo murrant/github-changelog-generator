@@ -199,16 +199,17 @@ class Repository
         if (isset($this->cache)) {
             $key = md5($url);
             if ($this->cache->has($key)) {
-                $response = $this->cache->get($key);
+                list($response, $next) = $this->cache->get($key);
             } else {
-                $response = $this->fetch($url);
-                $this->cache->set($key, $response);
+                $result = $this->fetch($url);
+                $this->cache->set($key, $result);
+                list($response, $next) = $result;
             }
         } else {
-            $response = $this->fetch($url);
+            list($response, $next) = $this->fetch($url);
         }
 
-        if (count(preg_grep('#Link: <(.+?)>; rel="next"#', $http_response_header)) === 1) {
+        if ($next) {
             return array_merge($response, $this->fetchCache($call, $params, ++$page));
         }
 
@@ -233,6 +234,8 @@ class Repository
         $response = file_get_contents($url, null, $context);
         $response = $response ? json_decode($response) : [];
 
-        return $response;
+        $next = count(preg_grep('#Link: <(.+?)>; rel="next"#', $http_response_header)) === 1;
+
+        return [$response, $next];
     }
 }
