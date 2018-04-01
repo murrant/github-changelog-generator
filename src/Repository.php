@@ -197,7 +197,7 @@ class Repository
         $url = sprintf('%s?%s', $call, http_build_query($params));
 
         if (isset($this->cache)) {
-            $key = sha1($url);
+            $key = md5($url);
             if ($this->cache->has($key)) {
                 $response = $this->cache->get($key);
             } else {
